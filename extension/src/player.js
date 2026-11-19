@@ -7,6 +7,7 @@ import { loadEngine, tuneStore, SIZES } from './engine.js';
 import { makeReadable, isCorsError } from './capture.js';
 import { Presenter } from './present.js';
 import { Upscaler } from './upscale.js';
+import { UpscaleWatch, fixedRateShortfall } from './gpu-budget.js';
 
 const url = p => chrome.runtime.getURL(p);
 const ENGINE_URLS = {
@@ -58,6 +59,8 @@ export class Player {
     this.spec = null;
     this.pacer = null;
     this.pacerKey = '';
+    this.upscaleWatch = new UpscaleWatch();
+    this.presentCostStale = false;
     this.recording = false;
     this.source = null;
     this.pictureInput = null;
@@ -220,12 +223,27 @@ export class Player {
     if (!this.pacer) {
       this.pacer = this.backend.createPacer(options);
       this.pacerKey = key;
+      this.upscaleWatch = new UpscaleWatch();
+      this.presentCostStale = false;
       this.syncRecording();
       return;
     }
     if (key === this.pacerKey) return;
     this.pacerKey = key;
     try { this.pacer.setOptions(now, options); } catch (e) { log('pacer options', e); }
+  }
+
+  // A present cost left from the time the upscaler ran (7 ms a frame at 720p) kept the fixed rates from generating at
+  // all and held Auto, Match display and Custom at the source rate. The Pacer cannot take a cost back, so it is replaced.
+  forgetPresentCost() {
+    const old = this.pacer;
+    this.pacer = null;
+    this.pacerKey = '';
+    this.recording = false;
+    this.ensurePacer();
+    this.costs = new this.backend.adapters.CostSampler(this.pacer, this.backend.nudge);
+    this.resetPipeline('stale present cost', false);
+    try { old?.free?.(); } catch { /* already freed */ }
   }
 
   syncRecording() {
@@ -431,6 +449,7 @@ export class Player {
         && Upscaler.needed(texture.width, texture.height, this.overlay.width, this.overlay.height)) {
       tex = this.upscaler.process(texture, now, this.costSink) || texture;
     }
+    if (this.upscaleWatch.note(tex !== texture)) this.presentCostStale = true;
     let compare = null;
     if (this.cfg.compare) {
       if (!this.cfg.fg) {
@@ -766,6 +785,7 @@ export class Player {
     }
     if (!this.needsCanvas()) { this.overlay.passthrough(); return; }
     if (!this.cfg.fg || !this.stream || !this.pacer) return;
+    if (this.presentCostStale) this.forgetPresentCost();
     const tick = this.pacer.tick(now);
     if (tick.present) {
       const f = tick.present.frame;
@@ -936,6 +956,8 @@ export class Player {
     const dropping = (this.stats.dropWin.length / 2) / presents > 0.12;
     const fixed = typeof c.factor === 'number';
     if (fixed && dropping) return 'Frames are dropping: lower the output rate or the quality, or switch to Auto';
+    const short = fixed && c.factor > 1 ? fixedRateShortfall(r) : null;
+    if (short) return `No frames are generated: ${c.factor}× needs ${short.need.toFixed(0)} ms of GPU for each ${short.interval.toFixed(0)} ms frame at this quality. Lower the quality${c.sr ? ', turn Upscale off' : ''} or switch to Auto`;
     const plan = r.plan;
     if (c.factor === 'auto' && plan?.state === 'no_two_x_gpu') return 'The GPU cannot keep up even at 2x: lower the quality';
     if (plan?.warning && !['measuring', 'factor'].includes(plan.state)
