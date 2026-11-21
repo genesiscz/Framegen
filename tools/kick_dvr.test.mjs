@@ -40,6 +40,8 @@ function watchFixture(t) {
   class Video {
     constructor(currentTime) { this.currentTime = currentTime; }
     duration = 120;
+    playbackRate = 1;
+    defaultPlaybackRate = 1;
     offsetWidth = 640;
     readyState = 4;
   }
@@ -105,4 +107,45 @@ test('navigation discards a restore even when the old video element is reused', 
   video.currentTime = 0.034;
   dispatch('playing', video);
   assert.equal(video.currentTime, 0.034);
+});
+
+// what a dropped source does to the element: the position and the speed go back to their defaults
+const rebuild = (dispatch, video) => {
+  dispatch('emptied', video);
+  video.currentTime = 0.034;
+  video.playbackRate = video.defaultPlaybackRate;
+};
+
+test('the playback speed goes back with the position', t => {
+  const { Video, dispatch } = watchFixture(t);
+  const video = new Video(67);
+  video.playbackRate = 1.5;
+  dispatch('timeupdate', video);
+  rebuild(dispatch, video);
+  dispatch('playing', video);
+  assert.equal(video.currentTime, 67);
+  assert.equal(video.playbackRate, 1.5);
+});
+
+test('a speed chosen after the rebuild is kept', t => {
+  const { Video, dispatch } = watchFixture(t);
+  const video = new Video(67);
+  video.playbackRate = 1.5;
+  dispatch('timeupdate', video);
+  rebuild(dispatch, video);
+  video.playbackRate = 2;
+  dispatch('playing', video);
+  assert.equal(video.currentTime, 67);
+  assert.equal(video.playbackRate, 2);
+});
+
+test('a player that kept the place keeps the speed it set', t => {
+  const { Video, dispatch } = watchFixture(t);
+  const video = new Video(67);
+  video.playbackRate = 1.5;
+  dispatch('timeupdate', video);
+  rebuild(dispatch, video);
+  video.currentTime = 67;
+  dispatch('playing', video);
+  assert.equal(video.playbackRate, 1);
 });

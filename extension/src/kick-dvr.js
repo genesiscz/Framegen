@@ -1,7 +1,9 @@
 // Kick: keep the place in a rewound live stream. Kick's player rebuilds its media source when the quality changes
 // (and on its own quality switches), and for a rewound live stream it then plays the recording from 0: the viewer
 // lands hours back, at the start of the stream. The player never does this to a recording on purpose, so when a
-// rebuilt source of the same recording starts at 0, the position from before the rebuild is put back.
+// rebuilt source of the same recording starts at 0, the position from before the rebuild is put back. The playback
+// speed goes back with it: the browser resets it to the default when a source is dropped, and in the recorded
+// restarts the player did not set it again.
 
 const NEAR_START_S = 5;       // where a rebuilt source starts when the player lost the position
 const MIN_POSITION_S = 30;    // below this there is nothing worth restoring
@@ -37,10 +39,12 @@ function toast(text) {
 }
 
 export function watchKickDvr({ log = () => {} } = {}) {
-  let last = null;      // the playing recording: { video, url, duration, position }
+  let last = null;      // the playing recording: { video, url, duration, position, rate }
   let pending = null;   // `last` at the moment its source was torn down, with an expiry
   const main = v => v instanceof HTMLVideoElement && v.offsetWidth > 100;
-  const snapshot = video => ({ video, url: location.href, duration: video.duration, position: video.currentTime });
+  const snapshot = video => ({
+    video, url: location.href, duration: video.duration, position: video.currentTime, rate: video.playbackRate,
+  });
   const discardStale = video => {
     if (pending && (pending.video !== video || pending.url !== location.href || performance.now() >= pending.expires)) {
       pending = null;
@@ -58,11 +62,15 @@ export function watchKickDvr({ log = () => {} } = {}) {
     discardStale(v);
     if (!pending || v.readyState < 1) return;
     const to = positionToRestore(pending, snapshot(v));
+    const { rate } = pending;
     pending = null;
     if (to === null) return;
     v.currentTime = to;
-    log('kick: the player restarted the recording at 0, back to', to.toFixed(1));
-    toast(`Kick restarted the stream from the beginning: back at ${clock(to)}`);
+    // only a speed the reset left behind is replaced: one that was chosen since then stays
+    const speedLost = v.playbackRate === v.defaultPlaybackRate && rate !== v.playbackRate;
+    if (speedLost) v.playbackRate = rate;
+    log('kick: the player restarted the recording at 0, back to', to.toFixed(1), speedLost ? `at ${rate}x` : '');
+    toast(`Kick restarted the stream from the beginning: back at ${clock(to)}${speedLost ? `, speed ${rate}x` : ''}`);
   };
   for (const type of ['timeupdate', 'seeking']) document.addEventListener(type, note, true);
   document.addEventListener('emptied', e => {
