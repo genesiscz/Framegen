@@ -11,6 +11,9 @@
   .dot { width: 8px; height: 8px; border-radius: 50%; background: #4a4e55; }
   .dot.on { background: #19c37d; box-shadow: 0 0 0 3px rgba(25,195,125,.18); }
   .ver { color: #70767e; font-size: 11px; font-weight: 400; font-variant-numeric: tabular-nums; }
+  .build { margin: -8px 0 10px 16px; color: #70767e; font-size: 11px; font-variant-numeric: tabular-nums; }
+  .build:empty { display: none; }
+  .build b { color: #f0c674; font-weight: 550; }
   #state { margin-left: auto; padding: 2px 8px; border-radius: 20px; background: #1a1c1f; color: #a3a8af;
            font-size: 11px; font-weight: 600; }
   #state.on { background: #14211c; color: #6fdcae; }
@@ -50,6 +53,7 @@
 <body>
 <div class="wrap">
   <div class="title"><span class="dot" id="dot"></span>Framegen <span class="ver" id="ver"></span><span id="state">Off</span></div>
+  <div class="build" id="build"></div>
   <div class="tabs">
     <button id="tabStatus" class="act">Status</button>
     <button id="tabHelp">Help</button>

@@ -14,6 +14,8 @@ import { installBenchBridge, benchToken } from './bench.js';
 import { watchKickDvr } from './kick-dvr.js';
 
 export const VERSION = chrome.runtime.getManifest().version;
+// When this tab loaded the code: the popup tells a tab that runs older code than the folder holds.
+const LOADED_AT = Date.now();
 
 export function boot() {
   const bench = benchToken();
@@ -105,6 +107,8 @@ export function boot() {
 
   async function toggle() {
     if (toggling) return;
+    // after the extension was updated or reloaded, the script already in a page cannot load the engine any more
+    if (!chrome.runtime?.id) { notices.showCritical('Framegen was updated: reload the page'); return; }
     if (!controls) injectUI();
     toggling = true;
     try {
@@ -112,7 +116,17 @@ export function boot() {
       const video = biggestVideo();
       if (!video) { notices.showCritical('Framegen: no video found'); return; }
       try { await player.start(video); }
-      catch (e) { player.preparing(false); notices.showCritical('Framegen error: ' + (e?.message || e)); if (!player.blocked) log(e); }
+      catch (e) {
+        player.preparing(false);
+        notices.showCritical('Framegen error: ' + (e?.message || e));
+        if (!player.blocked) log(e);
+        // kept on disk: "unreachable" on screen says nothing, the stack and the video say where the engine stopped
+        try {
+          chrome.storage.local.set({ fcLastError: { at: new Date().toISOString(), version: VERSION, page: location.hostname,
+            message: String(e?.message || e), stack: String(e?.stack || '').slice(0, 2000),
+            video: [video.videoWidth, video.videoHeight, video.readyState], status: player.status() } });
+        } catch { /* storage unavailable in this frame */ }
+      }
     } finally { toggling = false; }
   }
 
@@ -229,7 +243,7 @@ export function boot() {
         const v = player.video || biggestVideo();
         const respond = async () => {
           await player.probeAdapter();
-          try { sendResponse({ version: VERSION, hasVideo: !!v, ...player.status() }); } catch { /* popup closed */ }
+          try { sendResponse({ version: VERSION, loadedAt: LOADED_AT, hasVideo: !!v, ...player.status() }); } catch { /* popup closed */ }
         };
         if (player.isRunning()) respond();
         else setTimeout(respond, v ? 120 : 250);
